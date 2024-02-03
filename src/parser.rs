@@ -3,6 +3,7 @@ use std::{
     fs::File,
     io::{BufRead, BufReader},
     iter,
+    sync::{Arc, Mutex},
 };
 
 /// Parser for .v circuit benchmark files
@@ -15,16 +16,16 @@ use std::{
 /// Input & output are Vec as amount
 /// NOT as bool
 /// op as bool, 0 - or, 1 - and
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Gate {
-    name: String,
-    kind: i8,
-    input: Vec<Option<Gate>>,
+    pub name: String,
+    pub kind: i8,
+    pub input: Vec<Option<Arc<Mutex<Gate>>>>,
     //    output: Option<Vec<Gate>>,
-    inverted_input: Option<Vec<bool>>,
-    stuck_at: Option<Vec<bool>>,
-    value: Option<bool>,
-    op: Option<bool>,
+    pub inverted_input: Option<Vec<bool>>,
+    pub stuck_at: Option<Vec<bool>>,
+    pub value: Option<bool>,
+    pub op: Option<bool>,
 }
 impl Gate {
     fn new(gate_name: String, gate_type: i8) -> Gate {
@@ -39,11 +40,47 @@ impl Gate {
             op: None,
         }
     }
+    pub fn evaluate(&self) -> Option<bool> {
+        let mut result = false;
+        if let inputs = &self.input {
+            let mut input_gates = inputs.iter();
+            if let Some(Some(input_gate_0_tmp)) = input_gates.next() {
+                //println!("{:?}", input_gate_0_tmp);
+                let input_gate_0 = input_gate_0_tmp.lock().unwrap(); // Locking the Mutex
+                                                                     //println!("{:?}", input_gate_0.value);
+                let mut input_value_0 = input_gate_0.value.unwrap();
+                if self.inverted_input.as_ref().unwrap()[0] {
+                    input_value_0 = !input_value_0;
+                }
+                // if two gates form input
+                if let Some(Some(input_gate_1)) = input_gates.next() {
+                    let input_gate_1 = input_gate_1.lock().unwrap(); // Locking the Mutex
+                    let mut input_value_1 = input_gate_1.value.unwrap();
+                    if self.inverted_input.as_ref().unwrap()[1] {
+                        input_value_1 = !input_value_1;
+                    }
+                    let op = self.op.unwrap();
+                    if op {
+                        result = input_value_0 && input_value_1;
+                    } else {
+                        result = input_value_0 || input_value_1;
+                    }
+                } else {
+                    result = input_value_0;
+                }
+            }
+        }
+        Some(result)
+    }
 }
 
-pub fn parse(file: BufReader<File>) -> HashMap<String, Gate> {
-    let mut network: HashMap<String, Gate> = HashMap::new();
+pub fn parse(
+    file: BufReader<File>,
+) -> (HashMap<String, Arc<Mutex<Gate>>>, Vec<String>, Vec<String>) {
+    let mut network: HashMap<String, Arc<Mutex<Gate>>> = HashMap::new();
     let mut parsing_flags: Vec<bool> = vec![false, false, false, false];
+    let mut gates: Vec<String> = Vec::new();
+    let mut ret_outputs: Vec<String> = Vec::new();
     let mut inputs = String::new();
     let mut outputs = String::new();
     let mut wires = String::new();
@@ -66,7 +103,7 @@ pub fn parse(file: BufReader<File>) -> HashMap<String, Gate> {
             parsing_flags[2] = false;
             parsing_flags[3] = true;
         }
-        if content.contains("endmodule") {
+        if content.contains("endmodule") || content.eq("end;") {
             break;
         }
         if parsing_flags[0] {
@@ -93,57 +130,73 @@ pub fn parse(file: BufReader<File>) -> HashMap<String, Gate> {
     }
 
     let mut _in_str: Vec<&str> = inputs.split(',').collect();
-
     for i in _in_str.clone() {
-        network.insert(i.to_string(), Gate::new(i.to_owned(), 0));
+        let new_gate = Arc::new(Mutex::new(Gate::new(i.to_owned(), 0)));
+        network.insert(i.to_string(), Arc::clone(&new_gate));
     }
-    network.insert("1'b1".to_string(), Gate::new("1'b1".to_string(), 0));
+
+    let constant_gate = Arc::new(Mutex::new(Gate::new("1'b1".to_string(), 0)));
+    network.insert("1'b1".to_string(), Arc::clone(&constant_gate));
 
     let mut _wire_str: Vec<&str> = wires.split(",").collect();
     let mut _out_str: Vec<&str> = outputs.split(",").collect();
     let mut _assign_str: Vec<&str> = assignments.split(";").collect();
     _assign_str.pop();
 
-    for assignment in _assign_str {
-        let equation: Vec<&str> = assignment.clone().split("=").collect();
-        let mut input: Vec<&str> = Vec::new();
-        let mut gate_inputs: Vec<Option<Gate>> = Vec::new();
-        let mut inverted_inputs: Option<Vec<bool>> = None;
-        let mut op: Option<bool> = None;
-        if equation[1].contains(&['&', '|'][..]) {
-            op = Some(equation[1].contains('&'));
-            input = equation[1].split(&['&', '|'][..]).collect();
-            inverted_inputs = Some(vec![input[0].contains('~'), input[1].contains('~')]);
-            let input_0 = network.get(&input[0].replace("~", ""));
-            let input_1 = network.get(&input[1].replace("~", ""));
-            gate_inputs.push(input_0.cloned());
-            gate_inputs.push(input_1.cloned());
-        } else {
-            inverted_inputs = Some(vec![equation[1].contains('~')]);
-            let input_0 = network.get(&equation[1].replace("~", ""));
-            gate_inputs.push(input_0.cloned());
-        }
-        if gate_inputs.contains(&None) {
-        } else {
-            network.insert(
-                equation[0].to_string(),
-                Gate {
+    while !_assign_str.is_empty() {
+        let mut ind_vec: Vec<usize> = Vec::new();
+        for (ind, assignment) in _assign_str.iter().enumerate() {
+            let equation: Vec<&str> = assignment.clone().split("=").collect();
+            let mut input: Vec<&str> = Vec::new();
+            let mut gate_inputs: Vec<Option<Arc<Mutex<Gate>>>> = Vec::new();
+            let mut inverted_inputs: Option<Vec<bool>> = None;
+            let mut op: Option<bool> = None;
+            if equation[1].contains(&['&', '|'][..]) {
+                op = Some(equation[1].contains('&'));
+                input = equation[1].split(&['&', '|'][..]).collect();
+                inverted_inputs = Some(vec![input[0].contains('~'), input[1].contains('~')]);
+                let input_0 = network.get(&input[0].replace("~", ""));
+                let input_1 = network.get(&input[1].replace("~", ""));
+                gate_inputs.push(input_0.map(|gate| Arc::clone(&gate)));
+                gate_inputs.push(input_1.map(|gate| Arc::clone(&gate)));
+            } else {
+                inverted_inputs = Some(vec![equation[1].contains('~')]);
+                let input_0 = network.get(&equation[1].replace("~", ""));
+                gate_inputs.push(input_0.map(|gate| Arc::clone(&gate)));
+            }
+            if gate_inputs.iter().any(|input| input.is_none()) {
+            } else {
+                let new_gate = Arc::new(Mutex::new(Gate {
                     name: equation[0].to_string(),
                     kind: 1,
                     input: gate_inputs,
-                    //                output: (),
                     inverted_input: inverted_inputs,
                     stuck_at: None,
                     value: None,
                     op: op,
-                },
-            );
+                }));
+                network.insert(equation[0].to_string(), Arc::clone(&new_gate));
+                gates.push(equation[0].to_string());
+                ind_vec.push(ind);
+            }
+            // Implement network.push(new_gate)
+            // println!("{}", ind);
+            // println!("{:?},{:?},\n{}", index_input_0, index_input_1, assignment);
         }
-        // Implement network.push(new_gate)
-        // println!("{}", ind);
-        // println!("{:?},{:?},\n{}", index_input_0, index_input_1, assignment);
+        ind_vec.reverse();
+        for i in ind_vec.clone() {
+            _assign_str.remove(i);
+        }
     }
-
+    /*  for i in _in_str {
+        gates.push(i.to_owned());
+    }
+    for i in _wire_str {
+        gates.push(i.to_owned());
+    }*/
+    for i in _out_str {
+        ret_outputs.push(i.to_owned());
+    }
     println!("\ndone");
-    network
+    return (network, gates, ret_outputs);
 }
