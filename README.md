@@ -1,4 +1,12 @@
 ﻿# sysverification
+## Repoübersicht
+- sys_verifikation.exe - executable
+- ordner /src/:
+  - parser.rs: source code des parsers
+  - main.rs: source code der good- & bad-circuit simulation
+- *.v dateien - benchmarks
+- logs.json:
+  - beispiel des programmoutputs mit dem benchmark ethernet_synth.v
 
 ## Usage
 - sys_verifikation.exe herunterladen
