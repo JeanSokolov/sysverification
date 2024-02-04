@@ -23,7 +23,7 @@ pub struct Gate {
     pub input: Vec<Option<Arc<Mutex<Gate>>>>,
     //    output: Option<Vec<Gate>>,
     pub inverted_input: Option<Vec<bool>>,
-    pub stuck_at: Option<Vec<bool>>,
+    pub stuck_at: Vec<Option<bool>>,
     pub value: Option<bool>,
     pub op: Option<bool>,
 }
@@ -35,7 +35,7 @@ impl Gate {
             input: vec![None],
             //           output: None,
             inverted_input: None,
-            stuck_at: None,
+            stuck_at: vec![None],
             value: None,
             op: None,
         }
@@ -52,12 +52,18 @@ impl Gate {
                 if self.inverted_input.as_ref().unwrap()[0] {
                     input_value_0 = !input_value_0;
                 }
+                if self.stuck_at[0].is_some() {
+                    input_value_0 = self.stuck_at[0].unwrap();
+                }
                 // if two gates form input
                 if let Some(Some(input_gate_1)) = input_gates.next() {
                     let input_gate_1 = input_gate_1.lock().unwrap(); // Locking the Mutex
                     let mut input_value_1 = input_gate_1.value.unwrap();
                     if self.inverted_input.as_ref().unwrap()[1] {
                         input_value_1 = !input_value_1;
+                    }
+                    if self.stuck_at[1].is_some() {
+                        input_value_1 = self.stuck_at[1].unwrap();
                     }
                     let op = self.op.unwrap();
                     if op {
@@ -70,6 +76,7 @@ impl Gate {
                 }
             }
         }
+
         Some(result)
     }
 }
@@ -86,6 +93,7 @@ pub fn parse(
     let mut wires = String::new();
     let mut assignments = String::new();
 
+    // parse file contents, divide it into inputs, outputs, wires and assignments
     for lines in file.lines() {
         let content = lines.unwrap();
         if content.contains("input") && !parsing_flags[0] {
@@ -110,26 +118,28 @@ pub fn parse(
             inputs += &content
                 .replace("input", "")
                 .replace(" ", "")
-                .replace(";", "");
+                .replace(";", ",");
         }
         if parsing_flags[1] {
             outputs += &content
                 .replace("output", "")
                 .replace(" ", "")
-                .replace(";", "");
+                .replace(";", ",");
         }
         if parsing_flags[2] {
             wires += &content
                 .replace("wire", "")
                 .replace(" ", "")
-                .replace(";", "");
+                .replace(";", ",");
         }
         if parsing_flags[3] {
             assignments += &content.replace("assign", "").replace(" ", "");
         }
     }
 
+    // initialize input gates
     let mut _in_str: Vec<&str> = inputs.split(',').collect();
+    _in_str.pop();
     for i in _in_str.clone() {
         let new_gate = Arc::new(Mutex::new(Gate::new(i.to_owned(), 0)));
         network.insert(i.to_string(), Arc::clone(&new_gate));
@@ -141,8 +151,11 @@ pub fn parse(
     let mut _wire_str: Vec<&str> = wires.split(",").collect();
     let mut _out_str: Vec<&str> = outputs.split(",").collect();
     let mut _assign_str: Vec<&str> = assignments.split(";").collect();
+    _wire_str.pop();
+    _out_str.pop();
     _assign_str.pop();
 
+    // initialize wire- and output gates based on assigments
     while !_assign_str.is_empty() {
         let mut ind_vec: Vec<usize> = Vec::new();
         for (ind, assignment) in _assign_str.iter().enumerate() {
@@ -151,6 +164,7 @@ pub fn parse(
             let mut gate_inputs: Vec<Option<Arc<Mutex<Gate>>>> = Vec::new();
             let mut inverted_inputs: Option<Vec<bool>> = None;
             let mut op: Option<bool> = None;
+            // determine operation type and split assignment into lhs and rhs, then split rhs into inputs
             if equation[1].contains(&['&', '|'][..]) {
                 op = Some(equation[1].contains('&'));
                 input = equation[1].split(&['&', '|'][..]).collect();
@@ -164,6 +178,7 @@ pub fn parse(
                 let input_0 = network.get(&equation[1].replace("~", ""));
                 gate_inputs.push(input_0.map(|gate| Arc::clone(&gate)));
             }
+            // initialize gates in assignment if all input gates (rhs values) exist in the network
             if gate_inputs.iter().any(|input| input.is_none()) {
             } else {
                 let new_gate = Arc::new(Mutex::new(Gate {
@@ -171,7 +186,7 @@ pub fn parse(
                     kind: 1,
                     input: gate_inputs,
                     inverted_input: inverted_inputs,
-                    stuck_at: None,
+                    stuck_at: vec![None, None],
                     value: None,
                     op: op,
                 }));
@@ -179,24 +194,16 @@ pub fn parse(
                 gates.push(equation[0].to_string());
                 ind_vec.push(ind);
             }
-            // Implement network.push(new_gate)
-            // println!("{}", ind);
-            // println!("{:?},{:?},\n{}", index_input_0, index_input_1, assignment);
         }
+        // remove assignments that were successfully parsed
         ind_vec.reverse();
         for i in ind_vec.clone() {
             _assign_str.remove(i);
         }
     }
-    /*  for i in _in_str {
-        gates.push(i.to_owned());
-    }
-    for i in _wire_str {
-        gates.push(i.to_owned());
-    }*/
     for i in _out_str {
         ret_outputs.push(i.to_owned());
     }
-    println!("\ndone");
+    println!("\nDone parsing!");
     return (network, gates, ret_outputs);
 }
