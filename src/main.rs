@@ -95,6 +95,9 @@ fn main() -> std::io::Result<()> {
 
         println!("\n-------------------------\n");
 
+        // clear stuck at
+        network[stuck_ats.last().unwrap()].lock().unwrap().stuck_at = vec![None, None];
+
         // Print Outputs
         /* for (name, gate) in network.iter() {
             let gate = gate.lock().unwrap(); // Acquire lock
