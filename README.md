@@ -1,4 +1,11 @@
 ﻿# sysverification
+## Unterschiede zum main branch
+- sys_verifikation.exe erhält zwei weitere parameter:
+- 1. Parameter - filepath
+  2. Parameter (neu) - number of testpatterns
+  3. Parameter (neu) - number of stuck-ats per iteration
+- ./sys_verifikation.exe [file] [num_gcs] [num_bcs]
+  
 ## Repoübersicht
 - sys_verifikation.exe - executable
 - ordner /src/:
